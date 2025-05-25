@@ -8,9 +8,6 @@ import streamlit as st
 from PIL import Image, ImageOps, ImageFilter
 import fitz  # PyMuPDF
 
-# Jangan set path ke tesseract di Streamlit Cloud
-# pytesseract akan pakai default path Linux yang sudah tersedia
-
 # === Kata kunci dokumen ===
 keywords = [
     'SURAT PERINTAH MEMBAYAR', 
@@ -28,19 +25,44 @@ def preprocess_image(image):
     bw = sharpened.point(lambda x: 0 if x < 180 else 255, '1')
     return bw
 
-# === Proses satu file PDF (dari bytes) ===
-def process_pdf_from_bytes(file_bytes):
+# === Proses satu file PDF (dari bytes) dengan progress bar dan estimasi waktu ===
+def process_pdf_from_bytes(file_bytes, file_index, total_files):
     results = defaultdict(bool)
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
-        for page in doc:
-            pix = page.get_pixmap(dpi=300)
+        total_pages = len(doc)
+
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+
+        start_time = time.time()
+
+        for i, page in enumerate(doc):
+            pix = page.get_pixmap(dpi=200)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             processed_image = preprocess_image(img)
             text = pytesseract.image_to_string(processed_image)
+
             for keyword in keywords:
                 if keyword in text:
                     results[keyword] = True
+
+            # Estimasi waktu
+            elapsed = time.time() - start_time
+            avg_time = elapsed / (i + 1)
+            estimated_total = avg_time * total_pages
+            remaining = estimated_total - elapsed
+
+            # Update progress
+            progress = (i + 1) / total_pages
+            progress_bar.progress(progress)
+            progress_text.text(
+                f"📄 File {file_index + 1}/{total_files} - Halaman {i + 1}/{total_pages} "
+                f"(estimasi sisa: {remaining:.1f} detik)"
+            )
+
+        progress_bar.empty()
+        progress_text.text(f"✅ Selesai memproses file {file_index + 1}/{total_files}")
     except Exception as e:
         st.error(f"Gagal memproses file: {e}")
     return results
@@ -52,12 +74,12 @@ uploaded_files = st.file_uploader("Unggah file PDF (lebih dari satu diperbolehka
 if uploaded_files:
     start = time.time()
     summary = {}
-    for uploaded_file in uploaded_files:
+    for i, uploaded_file in enumerate(uploaded_files):
         file_bytes = uploaded_file.read()
-        result = process_pdf_from_bytes(file_bytes)
+        result = process_pdf_from_bytes(file_bytes, i, len(uploaded_files))
         summary[uploaded_file.name] = result
 
-    # === Siapkan data untuk tabel dan Excel ===
+    # === Tabel dan rekap ===
     data = []
     jumlah_lengkap = 0
     jumlah_tidak_lengkap = 0
@@ -81,7 +103,6 @@ if uploaded_files:
     st.subheader("📊 Hasil Pemeriksaan")
     st.dataframe(df)
 
-    # === Tampilkan ringkasan
     st.success(f"✔️ Dokumen lengkap: {jumlah_lengkap}")
     st.warning(f"❌ Dokumen tidak lengkap: {jumlah_tidak_lengkap}")
 
@@ -90,7 +111,7 @@ if uploaded_files:
         'Jumlah': [len(uploaded_files), jumlah_lengkap, jumlah_tidak_lengkap]
     })
 
-    # === Simpan ke Excel (in memory)
+    # === Excel output
     from io import BytesIO
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -98,7 +119,6 @@ if uploaded_files:
         rekap_df.to_excel(writer, sheet_name='Rekapitulasi', index=False)
     output.seek(0)
 
-    # === Tombol download hasil
     st.download_button(
         label="📥 Unduh Hasil Excel",
         data=output,
