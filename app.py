@@ -1,6 +1,6 @@
 import os
 import pytesseract
-from pdf2image import convert_from_bytes
+import fitz  # PyMuPDF
 from collections import defaultdict
 from PIL import ImageOps, ImageFilter
 import pandas as pd
@@ -31,9 +31,11 @@ def preprocess_image(image):
 def process_pdf_from_bytes(file_bytes):
     results = defaultdict(bool)
     try:
-        images = convert_from_bytes(file_bytes, dpi=300)
-        for image in images:
-            processed_image = preprocess_image(image)
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        for page in doc:
+            pix = page.get_pixmap(dpi=300)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            processed_image = preprocess_image(img)
             text = pytesseract.image_to_string(processed_image)
             for keyword in keywords:
                 if keyword in text:
