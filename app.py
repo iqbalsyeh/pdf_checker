@@ -8,8 +8,8 @@ import streamlit as st
 from PIL import Image, ImageOps, ImageFilter
 import fitz  # PyMuPDF
 
-# === Konfigurasi awal ===
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Jangan set path ke tesseract di Streamlit Cloud
+# pytesseract akan pakai default path Linux yang sudah tersedia
 
 # === Kata kunci dokumen ===
 keywords = [
