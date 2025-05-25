@@ -1,11 +1,12 @@
 import os
 import pytesseract
-import fitz  # PyMuPDF
 from collections import defaultdict
-from PIL import ImageOps, ImageFilter
 import pandas as pd
 import time
 import streamlit as st
+
+from PIL import Image, ImageOps, ImageFilter
+import fitz  # PyMuPDF
 
 # === Konfigurasi awal ===
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
