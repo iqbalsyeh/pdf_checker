@@ -28,85 +28,89 @@ def preprocess_image(image):
     return bw
 
 # Proses satu file PDF
-def process_pdf_from_bytes(file_bytes, filename, progress_bar, idx, total, waktu_mulai_global, total_halaman_seluruhnya, halaman_diproses, info_area, caption_area):
+def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total_files=1, status_area=None, est_time_area=None, total_pages_all=1, start_time=0):
     results = defaultdict(bool)
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         pages = len(doc)
         for i, page in enumerate(doc):
-            # Update info proses
-            info_area.info(f"🔍 Memeriksa file: **{filename}** | Halaman: {i+1} dari {pages}")
-
-            # Proses halaman
             pix = page.get_pixmap(dpi=200)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             processed_image = preprocess_image(img)
             text = pytesseract.image_to_string(processed_image)
-
             for keyword in keywords:
                 if keyword in text:
                     results[keyword] = True
 
-            # Update progress
-            halaman_diproses += 1
-            elapsed = time.time() - waktu_mulai_global
-            rata2_per_halaman = elapsed / halaman_diproses
-            estimasi_sisa = rata2_per_halaman * (total_halaman_seluruhnya - halaman_diproses)
+            # Update progress dan estimasi waktu
+            current_page = sum([len(fitz.open(stream=f.read(), filetype="pdf")) for f in uploaded_files[:idx]]) + i + 1
+            elapsed = time.time() - start_time
+            progress = current_page / total_pages_all
+            est_total = elapsed / progress if progress > 0 else 0
+            remaining = est_total - elapsed
 
-            progress = halaman_diproses / total_halaman_seluruhnya
-            progress_bar.progress(min(progress, 1.0))
-            caption_area.caption(f"📄 Halaman {halaman_diproses} dari {total_halaman_seluruhnya} | ⏳ Estimasi sisa: {estimasi_sisa:.1f} detik")
+            if progress_bar:
+                progress_bar.progress(min(progress, 1.0))
+            if status_area:
+                status_area.markdown(f"📄 Sedang memeriksa **{uploaded_files[idx].name}**, halaman **{i+1}/{pages}**")
+            if est_time_area:
+                est_time_area.markdown(f"⏳ Estimasi selesai: **{remaining:.1f} detik lagi**")
     except Exception as e:
         st.error(f"Gagal memproses file: {e}")
-    return results, halaman_diproses
+    return results
 
 # ========== Tampilan Web ==========
 st.set_page_config(page_title="PDF Checker", layout="wide")
-st.markdown("<h1 style='text-align: center; color: darkblue;'>📄 Pemeriksa Kelengkapan Dokumen PDF Scan</h1>", unsafe_allow_html=True)
+
+# Logo BPK
+col1, col2, col3 = st.columns([1, 3, 1])
+with col1:
+    st.image("logo_bpk.png", width=100)
+with col2:
+    st.markdown("<h1 style='text-align: center; color: darkblue;'>📄 Pemeriksa Kelengkapan Dokumen PDF Scan</h1>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader("📤 Unggah file PDF (boleh lebih dari satu)", type="pdf", accept_multiple_files=True)
 
 if uploaded_files:
-    waktu_mulai_global = time.time()
-    st.info("⏳ Menghitung total halaman...")
-    
-    # Hitung total halaman
-    total_halaman = 0
-    file_byte_cache = {}  # Cache file agar bisa dibaca dua kali
-    for file in uploaded_files:
-        bytes_ = file.read()
-        file_byte_cache[file.name] = bytes_
+    start = time.time()
+    st.info("⏳ Memproses dokumen... Mohon tunggu.")
+
+    total_pages = 0
+    for f in uploaded_files:
+        f.seek(0)
         try:
-            doc = fitz.open(stream=bytes_, filetype="pdf")
-            total_halaman += len(doc)
+            doc = fitz.open(stream=f.read(), filetype="pdf")
+            total_pages += len(doc)
         except:
-            pass
+            continue
 
-    st.success(f"📚 Total halaman seluruh dokumen: {total_halaman}")
-    st.markdown("<hr>", unsafe_allow_html=True)
+    for f in uploaded_files:
+        f.seek(0)  # Reset pointer setelah dihitung
 
-    # Inisialisasi area
     progress_bar = st.progress(0)
-    info_area = st.empty()
-    caption_area = st.empty()
+    status_area = st.empty()
+    est_time_area = st.empty()
     summary = {}
-    halaman_diproses = 0
 
-    # Mulai proses file
     for idx, uploaded_file in enumerate(uploaded_files):
-        file_bytes = file_byte_cache[uploaded_file.name]
-        result, halaman_diproses = process_pdf_from_bytes(
-            file_bytes, uploaded_file.name,
-            progress_bar, idx, len(uploaded_files),
-            waktu_mulai_global, total_halaman, halaman_diproses,
-            info_area, caption_area
+        uploaded_file.seek(0)
+        file_bytes = uploaded_file.read()
+        result = process_pdf_from_bytes(
+            file_bytes, 
+            progress_bar, 
+            idx, 
+            len(uploaded_files),
+            status_area,
+            est_time_area,
+            total_pages,
+            start
         )
         summary[uploaded_file.name] = result
 
     progress_bar.progress(1.0)
-    info_area.success("✅ Pemeriksaan selesai!")
-    caption_area.caption("✅ Semua halaman telah diperiksa.")
+    status_area.markdown("✅ Pemeriksaan dokumen selesai!")
+    est_time_area.empty()
 
     # ===== Ringkasan dan Tabel =====
     data = []
@@ -158,8 +162,8 @@ if uploaded_files:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    durasi = time.time() - waktu_mulai_global
-    st.caption(f"⏱️ Total waktu proses: {durasi:.2f} detik")
+    durasi = time.time() - start
+    st.caption(f"⏱️ Waktu proses: {durasi:.2f} detik")
 
 # Footer
 st.markdown("<hr>", unsafe_allow_html=True)
