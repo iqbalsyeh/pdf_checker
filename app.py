@@ -4,82 +4,72 @@ from collections import defaultdict
 import pandas as pd
 import time
 import streamlit as st
-
 from PIL import Image, ImageOps, ImageFilter
 import fitz  # PyMuPDF
+from io import BytesIO
 
-# === Kata kunci dokumen ===
+# Kata kunci dokumen
 keywords = [
     'SURAT PERINTAH MEMBAYAR', 
     'SURAT PERINTAH PEMBAYARAN', 
     'DAFTAR SP2D SATKER',
     'SURAT PERMINTAAN PEMBAYARAN', 
-    'MEMBERI TUGAS', 'MENUGASKAN', 
-    'SURAT PERJALANAN DINAS', 'BERITA ACARA SERAH TERIMA', 'BERITA ACARA PEMBAYARAN'
+    'SURAT TUGAS',
+    'SURAT PERJALANAN DINAS', 
+    'BERITA ACARA SERAH TERIMA', 
+    'BERITA ACARA PEMBAYARAN'
 ]
 
-# === Preprocessing gambar ===
+# Preprocessing gambar
 def preprocess_image(image):
     gray = ImageOps.grayscale(image)
     sharpened = gray.filter(ImageFilter.SHARPEN)
     bw = sharpened.point(lambda x: 0 if x < 180 else 255, '1')
     return bw
 
-# === Proses satu file PDF (dari bytes) dengan progress bar dan estimasi waktu ===
-def process_pdf_from_bytes(file_bytes, file_index, total_files):
+# Proses satu file PDF
+def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total=1):
     results = defaultdict(bool)
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
-        total_pages = len(doc)
-
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
-
-        start_time = time.time()
-
+        pages = len(doc)
         for i, page in enumerate(doc):
             pix = page.get_pixmap(dpi=200)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             processed_image = preprocess_image(img)
             text = pytesseract.image_to_string(processed_image)
-
             for keyword in keywords:
                 if keyword in text:
                     results[keyword] = True
-
-            # Estimasi waktu
-            elapsed = time.time() - start_time
-            avg_time = elapsed / (i + 1)
-            estimated_total = avg_time * total_pages
-            remaining = estimated_total - elapsed
-
-            # Update progress
-            progress = (i + 1) / total_pages
-            progress_bar.progress(progress)
-            progress_text.text(
-                f"📄 File {file_index + 1}/{total_files} - Halaman {i + 1}/{total_pages} "
-                f"(estimasi sisa: {remaining:.1f} detik)"
-            )
-
-        progress_bar.empty()
-        progress_text.text(f"✅ Selesai memproses file {file_index + 1}/{total_files}")
+            if progress_bar:
+                progress = ((idx + i / pages) / total)
+                progress_bar.progress(min(progress, 1.0))
     except Exception as e:
         st.error(f"Gagal memproses file: {e}")
     return results
 
-# === Tampilan Web ===
-st.title("📄 Analisis Kelengkapan Dokumen PDF Scan")
-uploaded_files = st.file_uploader("Unggah file PDF (lebih dari satu diperbolehkan)", type="pdf", accept_multiple_files=True)
+# ========== Tampilan Web ==========
+st.set_page_config(page_title="PDF Checker", layout="wide")
+st.markdown("<h1 style='text-align: center; color: darkblue;'>📄 Pemeriksa Kelengkapan Dokumen PDF Scan</h1>", unsafe_allow_html=True)
+st.markdown("<hr>", unsafe_allow_html=True)
+
+uploaded_files = st.file_uploader("📤 Unggah file PDF (boleh lebih dari satu)", type="pdf", accept_multiple_files=True)
 
 if uploaded_files:
     start = time.time()
+    st.info("⏳ Memproses dokumen... Mohon tunggu.")
+    progress_bar = st.progress(0)
     summary = {}
-    for i, uploaded_file in enumerate(uploaded_files):
+
+    for idx, uploaded_file in enumerate(uploaded_files):
         file_bytes = uploaded_file.read()
-        result = process_pdf_from_bytes(file_bytes, i, len(uploaded_files))
+        result = process_pdf_from_bytes(file_bytes, progress_bar, idx, len(uploaded_files))
         summary[uploaded_file.name] = result
 
-    # === Tabel dan rekap ===
+    progress_bar.progress(1.0)
+    st.success("✅ Pemeriksaan selesai!")
+
+    # ===== Ringkasan dan Tabel =====
     data = []
     jumlah_lengkap = 0
     jumlah_tidak_lengkap = 0
@@ -89,7 +79,7 @@ if uploaded_files:
         lengkap = True
         for keyword in keywords:
             ada = result[keyword]
-            row[keyword] = 'ADA' if ada else 'TIDAK ADA'
+            row[keyword] = '✅' if ada else '❌'
             if not ada:
                 lengkap = False
         row['Status Dokumen'] = 'Lengkap' if lengkap else 'Tidak Lengkap'
@@ -100,19 +90,22 @@ if uploaded_files:
         data.append(row)
 
     df = pd.DataFrame(data)
-    st.subheader("📊 Hasil Pemeriksaan")
-    st.dataframe(df)
 
-    st.success(f"✔️ Dokumen lengkap: {jumlah_lengkap}")
-    st.warning(f"❌ Dokumen tidak lengkap: {jumlah_tidak_lengkap}")
+    st.subheader("📊 Hasil Pemeriksaan")
+    st.dataframe(df.style.applymap(
+        lambda val: 'color: green;' if val == '✅' else ('color: red;' if val == '❌' else ''),
+        subset=keywords
+    ))
 
     rekap_df = pd.DataFrame({
         'Keterangan': ['Jumlah Dokumen', 'Dokumen Lengkap', 'Dokumen Tidak Lengkap'],
         'Jumlah': [len(uploaded_files), jumlah_lengkap, jumlah_tidak_lengkap]
     })
 
-    # === Excel output
-    from io import BytesIO
+    st.subheader("📋 Ringkasan")
+    st.table(rekap_df)
+
+    # Simpan Excel
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name='Detail Pemeriksaan', index=False)
@@ -126,4 +119,9 @@ if uploaded_files:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    st.caption(f"⏱️ Waktu proses: {time.time() - start:.2f} detik")
+    durasi = time.time() - start
+    st.caption(f"⏱️ Waktu proses: {durasi:.2f} detik")
+
+# Footer
+st.markdown("<hr>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: gray;'>🔍 Aplikasi dibuat untuk membantu analisis dokumen pemeriksaan secara cepat dan efisien</p>", unsafe_allow_html=True)
