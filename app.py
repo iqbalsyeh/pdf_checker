@@ -8,30 +8,29 @@ from PIL import Image, ImageOps, ImageFilter
 import fitz  # PyMuPDF
 from io import BytesIO
 
-# ================== Konfigurasi ==================
+# Kata kunci dokumen
 keywords = [
-    'SURAT PERINTAH MEMBAYAR', 
-    'SURAT PERINTAH PEMBAYARAN', 
+    'SURAT PERINTAH MEMBAYAR',
+    'SURAT PERINTAH PEMBAYARAN',
     'DAFTAR SP2D SATKER',
-    'SURAT PERMINTAAN PEMBAYARAN', 
-    'MENUGASKAN', 'MEMBERI TUGAS', 
-    'SURAT PERJALANAN DINAS', 
-    'BERITA ACARA SERAH TERIMA', 
+    'SURAT PERMINTAAN PEMBAYARAN',
+    'MENUGASKAN', 'MEMBERI TUGAS',
+    'SURAT PERJALANAN DINAS',
+    'BERITA ACARA SERAH TERIMA',
     'BERITA ACARA PEMBAYARAN'
 ]
 
-st.set_page_config(page_title="PDF Checker", layout="wide")
-
-# ================== Fungsi ==================
+# Preprocessing gambar
 def preprocess_image(image):
     gray = ImageOps.grayscale(image)
     sharpened = gray.filter(ImageFilter.SHARPEN)
     bw = sharpened.point(lambda x: 0 if x < 180 else 255, '1')
     return bw
 
-def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total_files=1, 
-                           status_area=None, est_time_area=None, 
-                           total_pages_all=1, start_time=0, uploaded_files=None):
+# Proses satu file PDF
+def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total_files=1,
+                           status_area=None, est_time_area=None,
+                           total_pages_all=1, start_time=0, filename=""):
     results = defaultdict(bool)
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -45,9 +44,7 @@ def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total_files=1,
                 if keyword in text:
                     results[keyword] = True
 
-            # Estimasi waktu dan status halaman
-            current_page = sum([len(fitz.open(stream=f.read(), filetype="pdf")) 
-                                for f in uploaded_files[:idx]]) + i + 1
+            current_page = sum([len(fitz.open(stream=f['data'], filetype="pdf")) for f in uploaded_files[:idx]]) + i + 1
             elapsed = time.time() - start_time
             progress = current_page / total_pages_all
             est_total = elapsed / progress if progress > 0 else 0
@@ -56,69 +53,68 @@ def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total_files=1,
             if progress_bar:
                 progress_bar.progress(min(progress, 1.0))
             if status_area:
-                status_area.markdown(f"📄 Memeriksa **{uploaded_files[idx].name}**, halaman **{i+1}/{pages}**")
+                status_area.markdown(f"📄 Memeriksa **{filename}**, halaman **{i + 1}/{pages}**")
             if est_time_area:
                 est_time_area.markdown(f"⏳ Estimasi selesai: **{remaining:.1f} detik lagi**")
-
     except Exception as e:
         st.error(f"Gagal memproses file: {e}")
     return results
 
-# ================== Header Aplikasi ==================
-col1, col2 = st.columns([1, 9])
+# ========== Tampilan Web ==========
+st.set_page_config(page_title="PDF Checker", layout="wide")
+
+# Logo dan Judul
+col1, col2 = st.columns([1, 5])
 with col1:
-    st.image("logo_bpk.png", width=90)
+    st.image("logo_bpk.png", width=100)
 with col2:
     st.markdown("<h1 style='color: darkblue;'>📄 Pemeriksa Kelengkapan Dokumen PDF Scan</h1>", unsafe_allow_html=True)
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# ================== Upload Dokumen ==================
-uploaded_files = st.file_uploader("📤 Unggah file PDF (boleh lebih dari satu)", type="pdf", accept_multiple_files=True)
+# Upload File
+uploaded_streams = st.file_uploader("📤 Unggah file PDF (boleh lebih dari satu)", type="pdf", accept_multiple_files=True)
 
-if uploaded_files:
+if uploaded_streams:
     start = time.time()
     st.info("⏳ Memproses dokumen... Mohon tunggu.")
 
-    # Hitung total halaman semua file
+    # Simpan file ke RAM untuk bisa diproses ulang
+    uploaded_files = []
     total_pages = 0
-    for f in uploaded_files:
-        f.seek(0)
+    for f in uploaded_streams:
+        f_bytes = f.read()
         try:
-            doc = fitz.open(stream=f.read(), filetype="pdf")
+            doc = fitz.open(stream=f_bytes, filetype="pdf")
             total_pages += len(doc)
         except:
             continue
-
-    for f in uploaded_files:
-        f.seek(0)
+        uploaded_files.append({'name': f.name, 'data': f_bytes})
 
     progress_bar = st.progress(0)
     status_area = st.empty()
     est_time_area = st.empty()
     summary = {}
 
-    for idx, uploaded_file in enumerate(uploaded_files):
-        uploaded_file.seek(0)
-        file_bytes = uploaded_file.read()
+    for idx, file in enumerate(uploaded_files):
         result = process_pdf_from_bytes(
-            file_bytes=file_bytes,
-            progress_bar=progress_bar,
-            idx=idx,
-            total_files=len(uploaded_files),
-            status_area=status_area,
-            est_time_area=est_time_area,
-            total_pages_all=total_pages,
+            file['data'],
+            progress_bar,
+            idx,
+            len(uploaded_files),
+            status_area,
+            est_time_area,
+            total_pages,
             start_time=start,
-            uploaded_files=uploaded_files
+            filename=file['name']
         )
-        summary[uploaded_file.name] = result
+        summary[file['name']] = result
 
     progress_bar.progress(1.0)
     status_area.markdown("✅ Pemeriksaan dokumen selesai!")
     est_time_area.empty()
 
-    # ================== Hasil Pemeriksaan ==================
+    # ===== Ringkasan dan Tabel =====
     data = []
     jumlah_lengkap = 0
     jumlah_tidak_lengkap = 0
@@ -154,7 +150,7 @@ if uploaded_files:
     st.subheader("📋 Ringkasan")
     st.table(rekap_df)
 
-    # ================== Unduhan Excel ==================
+    # Simpan Excel
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name='Detail Pemeriksaan', index=False)
@@ -171,9 +167,6 @@ if uploaded_files:
     durasi = time.time() - start
     st.caption(f"⏱️ Waktu proses: {durasi:.2f} detik")
 
-# ================== Footer ==================
+# Footer
 st.markdown("<hr>", unsafe_allow_html=True)
-st.markdown(
-    "<p style='text-align: center; color: gray;'>🔍 Aplikasi ini dibuat untuk membantu analisis dokumen pemeriksaan secara cepat dan efisien di lingkungan BPK RI.</p>", 
-    unsafe_allow_html=True
-)
+st.markdown("<p style='text-align: center; color: gray;'>🔍 Aplikasi dibuat untuk membantu analisis dokumen pemeriksaan secara cepat dan efisien</p>", unsafe_allow_html=True)
