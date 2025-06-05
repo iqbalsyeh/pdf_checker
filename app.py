@@ -20,6 +20,8 @@ keywords = [
     'BERITA ACARA PEMBAYARAN'
 ]
 
+ocr_cache = {}  # Global cache OCR
+
 # Preprocessing gambar
 def preprocess_image(image):
     gray = ImageOps.grayscale(image)
@@ -30,16 +32,23 @@ def preprocess_image(image):
 # Proses satu file PDF
 def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total_files=1,
                            status_area=None, est_time_area=None,
-                           total_pages_all=1, start_time=0, filename=""):
+                           total_pages_all=1, start_time=0, filename="",
+                           dpi_setting=100):
     results = defaultdict(bool)
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         pages = len(doc)
         for i, page in enumerate(doc):
-            pix = page.get_pixmap(dpi=200)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            processed_image = preprocess_image(img)
-            text = pytesseract.image_to_string(processed_image)
+            key = f"{filename}_page_{i}"
+            if key in ocr_cache:
+                text = ocr_cache[key]
+            else:
+                pix = page.get_pixmap(dpi=dpi_setting)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                processed_image = preprocess_image(img)
+                text = pytesseract.image_to_string(processed_image)
+                ocr_cache[key] = text
+
             for keyword in keywords:
                 if keyword in text:
                     results[keyword] = True
@@ -72,6 +81,10 @@ with col2:
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
+# Opsi Cepat
+fast_mode = st.sidebar.checkbox("⚡ Mode cepat (turunkan kualitas scan)", value=True)
+dpi_setting = 100 if fast_mode else 200
+
 # Upload File
 uploaded_streams = st.file_uploader("📤 Unggah file PDF (boleh lebih dari satu)", type="pdf", accept_multiple_files=True)
 
@@ -79,7 +92,6 @@ if uploaded_streams:
     start = time.time()
     st.info("⏳ Memproses dokumen... Mohon tunggu.")
 
-    # Simpan file ke RAM untuk bisa diproses ulang
     uploaded_files = []
     total_pages = 0
     for f in uploaded_streams:
@@ -106,7 +118,8 @@ if uploaded_streams:
             est_time_area,
             total_pages,
             start_time=start,
-            filename=file['name']
+            filename=file['name'],
+            dpi_setting=dpi_setting
         )
         summary[file['name']] = result
 
