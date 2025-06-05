@@ -73,7 +73,7 @@ col1, col2 = st.columns([1, 5])
 with col1:
     st.image("logo_bpk.png", width=100)
 with col2:
-    st.markdown("<h1 style='color: darkblue;'>📄 Pemeriksa Kelengkapan Dokumen (Aman)</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='color: darkblue;'>📄 Pemeriksa Kelengkapan Dokumen</h1>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
 uploaded_streams = st.file_uploader("📤 Unggah file PDF", type="pdf", accept_multiple_files=True)
