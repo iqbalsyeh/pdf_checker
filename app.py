@@ -1,5 +1,3 @@
-# app.py
-
 import os
 import pytesseract
 from collections import defaultdict
@@ -22,14 +20,16 @@ keywords = [
     'BERITA ACARA PEMBAYARAN'
 ]
 
-ocr_cache = {}
+ocr_cache = {}  # Global cache OCR
 
+# Preprocessing gambar
 def preprocess_image(image):
     gray = ImageOps.grayscale(image)
     sharpened = gray.filter(ImageFilter.SHARPEN)
     bw = sharpened.point(lambda x: 0 if x < 180 else 255, '1')
     return bw
 
+# Proses satu file PDF
 def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total_files=1,
                            status_area=None, est_time_area=None,
                            total_pages_all=1, start_time=0, filename="",
@@ -53,7 +53,7 @@ def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total_files=1,
                 if keyword in text:
                     results[keyword] = True
 
-            current_page = idx + i + 1
+            current_page = sum([len(fitz.open(stream=f['data'], filetype="pdf")) for f in uploaded_files[:idx]]) + i + 1
             elapsed = time.time() - start_time
             progress = current_page / total_pages_all
             est_total = elapsed / progress if progress > 0 else 0
@@ -69,46 +69,44 @@ def process_pdf_from_bytes(file_bytes, progress_bar=None, idx=0, total_files=1,
         st.error(f"Gagal memproses file: {e}")
     return results
 
-def load_files_from_folder(folder_path):
-    pdf_files = [f for f in os.listdir(folder_path) if f.endswith('.pdf')]
-    files = []
-    for filename in pdf_files:
-        file_path = os.path.join(folder_path, filename)
-        with open(file_path, 'rb') as f:
-            files.append({'name': filename, 'data': f.read()})
-    return files
+# ========== Tampilan Web ==========
+st.set_page_config(page_title="PDF Checker", layout="wide")
 
-# ===== Tampilan Streamlit =====
-st.set_page_config(page_title="PDF Checker Otomatis", layout="wide")
+# Logo dan Judul
+col1, col2 = st.columns([1, 5])
+with col1:
+    st.image("logo_bpk.png", width=100)
+with col2:
+    st.markdown("<h1 style='color: darkblue;'>📄 Pemeriksa Kelengkapan Dokumen PDF Scan</h1>", unsafe_allow_html=True)
 
-st.title("📄 Pemeriksaan Otomatis Dokumen PDF dari Power Automate")
 st.markdown("<hr>", unsafe_allow_html=True)
 
+# Opsi Cepat
 fast_mode = st.sidebar.checkbox("⚡ Mode cepat (turunkan kualitas scan)", value=True)
 dpi_setting = 100 if fast_mode else 200
 
-# Folder sumber file (otomatis masuk)
-FOLDER_PATH = "inbox"
-uploaded_files = load_files_from_folder(FOLDER_PATH)
+# Upload File
+uploaded_streams = st.file_uploader("📤 Unggah file PDF (boleh lebih dari satu)", type="pdf", accept_multiple_files=True)
 
-if not uploaded_files:
-    st.warning("📂 Belum ada file masuk dari Power Automate.")
-else:
+if uploaded_streams:
     start = time.time()
-    st.info("⏳ Memproses dokumen...")
+    st.info("⏳ Memproses dokumen... Mohon tunggu.")
+
+    uploaded_files = []
+    total_pages = 0
+    for f in uploaded_streams:
+        f_bytes = f.read()
+        try:
+            doc = fitz.open(stream=f_bytes, filetype="pdf")
+            total_pages += len(doc)
+        except:
+            continue
+        uploaded_files.append({'name': f.name, 'data': f_bytes})
 
     progress_bar = st.progress(0)
     status_area = st.empty()
     est_time_area = st.empty()
     summary = {}
-
-    total_pages = 0
-    for f in uploaded_files:
-        try:
-            doc = fitz.open(stream=f['data'], filetype="pdf")
-            total_pages += len(doc)
-        except:
-            continue
 
     for idx, file in enumerate(uploaded_files):
         result = process_pdf_from_bytes(
@@ -129,8 +127,11 @@ else:
     status_area.markdown("✅ Pemeriksaan dokumen selesai!")
     est_time_area.empty()
 
+    # ===== Ringkasan dan Tabel =====
     data = []
-    lengkap_count, tidak_lengkap_count = 0, 0
+    jumlah_lengkap = 0
+    jumlah_tidak_lengkap = 0
+
     for filename, result in summary.items():
         row = {'Nama File': filename}
         lengkap = True
@@ -141,9 +142,9 @@ else:
                 lengkap = False
         row['Status Dokumen'] = 'Lengkap' if lengkap else 'Tidak Lengkap'
         if lengkap:
-            lengkap_count += 1
+            jumlah_lengkap += 1
         else:
-            tidak_lengkap_count += 1
+            jumlah_tidak_lengkap += 1
         data.append(row)
 
     df = pd.DataFrame(data)
@@ -156,12 +157,13 @@ else:
 
     rekap_df = pd.DataFrame({
         'Keterangan': ['Jumlah Dokumen', 'Dokumen Lengkap', 'Dokumen Tidak Lengkap'],
-        'Jumlah': [len(uploaded_files), lengkap_count, tidak_lengkap_count]
+        'Jumlah': [len(uploaded_files), jumlah_lengkap, jumlah_tidak_lengkap]
     })
 
     st.subheader("📋 Ringkasan")
     st.table(rekap_df)
 
+    # Simpan Excel
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name='Detail Pemeriksaan', index=False)
@@ -178,5 +180,6 @@ else:
     durasi = time.time() - start
     st.caption(f"⏱️ Waktu proses: {durasi:.2f} detik")
 
+# Footer
 st.markdown("<hr>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: gray;'>🔍 Pemeriksaan otomatis dokumen PDF via OCR dan Power Automate</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: gray;'>🔍 Aplikasi dibuat untuk membantu analisis dokumen pemeriksaan secara cepat dan efisien</p>", unsafe_allow_html=True)
