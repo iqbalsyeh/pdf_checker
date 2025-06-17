@@ -5,3 +5,5 @@ pandas
 openpyxl
 PyMuPDF
 cryptography
+fastapi
+uvicorn
